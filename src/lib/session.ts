@@ -41,6 +41,169 @@ export interface SessionData {
 }
 
 const STORAGE_KEY = "offprint:session"
+const SESSIONS_KEY = "offprint_sessions"
+const ALLTIME_KEY = "offprint_alltime"
+const SNAPSHOT_KEY = "offprint:last_snapshot"
+const MAX_SESSIONS_DAYS = 30
+
+export interface SavedSession {
+  id: string
+  date: string
+  platform: ReturnType<typeof getPlatform>
+  promptCount: number
+  totalInputTokens: number
+  totalEstimatedOutputTokens: number
+  totalEnergyWh: number
+  totalCo2Grams: number
+  totalWaterMl: number
+  taskBreakdown: Record<string, number>
+  attachmentCount: number
+  avgTokensPerPrompt: number
+}
+
+export interface AllTimeStats {
+  totalSessions: number
+  totalPrompts: number
+  totalEnergyWh: number
+  totalCo2Grams: number
+  totalWaterMl: number
+  firstSessionDate: string
+}
+
+const emptyAllTime = (): AllTimeStats => ({
+  totalSessions: 0,
+  totalPrompts: 0,
+  totalEnergyWh: 0,
+  totalCo2Grams: 0,
+  totalWaterMl: 0,
+  firstSessionDate: ""
+})
+
+function sessionId(s: SessionData): string {
+  return `${s.platform}-${s.startTime}`
+}
+
+function isoDate(ts: number): string {
+  const d = new Date(ts)
+  return d.toISOString().slice(0, 10)
+}
+
+function snapshot(s: SessionData): SavedSession {
+  const t = s.totals
+  const attachmentCount = s.prompts.reduce(
+    (n, p) => n + (p.attachmentCount ?? 0),
+    0
+  )
+  return {
+    id: sessionId(s),
+    date: isoDate(s.startTime),
+    platform: s.platform,
+    promptCount: t.promptCount,
+    totalInputTokens: t.inputTokens,
+    totalEstimatedOutputTokens: t.estimatedOutputTokens,
+    totalEnergyWh: t.energyWh,
+    totalCo2Grams: t.co2Grams,
+    totalWaterMl: t.waterMl,
+    taskBreakdown: { ...s.taskBreakdown },
+    attachmentCount,
+    avgTokensPerPrompt:
+      t.promptCount === 0 ? 0 : Math.round(t.inputTokens / t.promptCount)
+  }
+}
+
+function pruneOld(sessions: SavedSession[]): SavedSession[] {
+  const cutoff = Date.now() - MAX_SESSIONS_DAYS * 24 * 60 * 60 * 1000
+  return sessions.filter((s) => {
+    const ts = new Date(s.date).getTime()
+    return isFinite(ts) ? ts >= cutoff : true
+  })
+}
+
+export function saveCurrentSession(): void {
+  if (session.totals.promptCount === 0) return
+  if (typeof chrome === "undefined" || !chrome?.storage?.local) return
+  try {
+    chrome.storage.local.get(
+      [SESSIONS_KEY, ALLTIME_KEY, SNAPSHOT_KEY],
+      (res) => {
+        const sessions: SavedSession[] = Array.isArray(res?.[SESSIONS_KEY])
+          ? res[SESSIONS_KEY]
+          : []
+        const alltime: AllTimeStats = res?.[ALLTIME_KEY] ?? emptyAllTime()
+        const snaps: Record<string, SavedSession> =
+          res?.[SNAPSHOT_KEY] ?? {}
+
+        const id = sessionId(session)
+        const current = snapshot(session)
+        const prev = snaps[id]
+
+        // Delta against prior snapshot for this session id (or full when new)
+        const isNew = !prev
+        const deltaPrompts =
+          current.promptCount - (prev?.promptCount ?? 0)
+        const deltaEnergy =
+          current.totalEnergyWh - (prev?.totalEnergyWh ?? 0)
+        const deltaCo2 = current.totalCo2Grams - (prev?.totalCo2Grams ?? 0)
+        const deltaWater = current.totalWaterMl - (prev?.totalWaterMl ?? 0)
+
+        if (deltaPrompts > 0 || deltaEnergy > 0) {
+          alltime.totalPrompts += Math.max(0, deltaPrompts)
+          alltime.totalEnergyWh += Math.max(0, deltaEnergy)
+          alltime.totalCo2Grams += Math.max(0, deltaCo2)
+          alltime.totalWaterMl += Math.max(0, deltaWater)
+          if (isNew) {
+            alltime.totalSessions += 1
+            if (!alltime.firstSessionDate)
+              alltime.firstSessionDate = current.date
+          }
+        }
+
+        // Upsert into sessions array
+        const idx = sessions.findIndex((s) => s.id === id)
+        if (idx >= 0) sessions[idx] = current
+        else sessions.push(current)
+
+        const pruned = pruneOld(sessions)
+        snaps[id] = current
+
+        chrome.storage.local.set({
+          [SESSIONS_KEY]: pruned,
+          [ALLTIME_KEY]: alltime,
+          [SNAPSHOT_KEY]: snaps
+        })
+      }
+    )
+  } catch {
+    /* noop */
+  }
+}
+
+export function getSavedSessions(): Promise<SavedSession[]> {
+  return new Promise((resolve) => {
+    try {
+      chrome?.storage?.local?.get([SESSIONS_KEY], (res) => {
+        const sessions: SavedSession[] = Array.isArray(res?.[SESSIONS_KEY])
+          ? res[SESSIONS_KEY]
+          : []
+        resolve(sessions)
+      })
+    } catch {
+      resolve([])
+    }
+  })
+}
+
+export function getAllTimeStats(): Promise<AllTimeStats> {
+  return new Promise((resolve) => {
+    try {
+      chrome?.storage?.local?.get([ALLTIME_KEY], (res) => {
+        resolve(res?.[ALLTIME_KEY] ?? emptyAllTime())
+      })
+    } catch {
+      resolve(emptyAllTime())
+    }
+  })
+}
 
 function emptySession(): SessionData {
   return {
@@ -172,6 +335,7 @@ export function addPrompt(
     }
   }
   emit()
+  saveCurrentSession()
   return record
 }
 

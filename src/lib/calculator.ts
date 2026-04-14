@@ -38,6 +38,91 @@ function fmtSmall(n: number): string {
   return Math.round(n).toLocaleString()
 }
 
+// Pick a relatable energy comparison based on Wh magnitude.
+export function energyComparison(wh: number): string {
+  if (!isFinite(wh) || wh <= 0) return ""
+  if (wh < 0.1) {
+    // LED ≈ 0.005 Wh/s (5W bulb)
+    const seconds = wh / 0.005
+    return `≈ powering an LED for ${formatDuration(seconds)}`
+  }
+  if (wh < 1) {
+    // Full phone charge ≈ 15 Wh in ≈ 3600s → 1 Wh ≈ 240s of charging
+    const seconds = wh * 240
+    return `≈ ${formatDuration(seconds)} of phone charging`
+  }
+  if (wh < 15) {
+    const pct = (wh / 15) * 100
+    return `≈ ${fmtSmall(pct)}% of a full phone charge`
+  }
+  const charges = wh / 15
+  return `≈ ${fmtSmall(charges)} full phone charge${charges >= 2 ? "s" : ""}`
+}
+
+// Pick a relatable carbon comparison based on grams CO₂ magnitude.
+// Designed so each tier's number lands between ~1 and ~50 — feels concrete.
+export function carbonComparison(g: number): string {
+  if (!isFinite(g) || g <= 0) return ""
+  if (g < 0.5) {
+    // 1 min Netflix ≈ 0.6 g CO₂ → 1s ≈ 0.01 g CO₂
+    const seconds = g / 0.01
+    return `≈ ${formatDuration(seconds)} of streaming video`
+  }
+  if (g < 5) {
+    // 1 min Netflix ≈ 0.6 g CO₂
+    const minutes = g / 0.6
+    return `≈ ${fmtSmall(minutes)} min of streaming video`
+  }
+  if (g < 30) {
+    // 1 boil of a kettle ≈ 15 g CO₂
+    const boils = g / 15
+    return `≈ ${fmtSmall(boils)} kettle boil${boils >= 2 ? "s" : ""}`
+  }
+  if (g < 200) {
+    // 1 full phone charge ≈ 8 g CO₂
+    const charges = g / 8
+    return `≈ ${fmtSmall(charges)} phone charge${charges >= 2 ? "s" : ""}`
+  }
+  // Average car ≈ 338 g CO₂/mile
+  const miles = g / 338
+  return `≈ a ${fmtSmall(miles)}-mile car trip`
+}
+
+// Big-picture comparison for cumulative session totals.
+export function sessionEnergySentence(wh: number): string {
+  if (!isFinite(wh) || wh <= 0) return ""
+  if (wh < 1) {
+    const seconds = wh * 240
+    return `keeping a phone charging for ${fmtSmall(seconds)}s`
+  }
+  if (wh < 60) {
+    // 60W bulb → 60 Wh per hour
+    const minutes = (wh / 60) * 60
+    return `keeping a lightbulb on for ${fmtSmall(minutes)} min`
+  }
+  // Streaming video ≈ 100 Wh/hour
+  const minutes = (wh / 100) * 60
+  return `streaming ${fmtSmall(minutes)} min of video`
+}
+
+export function sessionCarbonSentence(g: number): string {
+  if (!isFinite(g) || g <= 0) return ""
+  if (g < 5) {
+    const minutes = g / 0.6
+    return `${fmtSmall(minutes)} min of streaming video`
+  }
+  if (g < 50) {
+    const charges = g / 8
+    return `${fmtSmall(charges)} phone charges`
+  }
+  if (g < 500) {
+    const km = g / 210
+    return `driving ${fmtSmall(km)} km`
+  }
+  const miles = g / 338
+  return `a ${fmtSmall(miles)}-mile car trip`
+}
+
 export function calculateImpact(
   characterCount: number,
   classification?: ClassificationResult,
@@ -74,9 +159,9 @@ export function calculateImpact(
     waterMl,
     impactLevel: getImpactLevel(totalEnergyWh),
     comparisons: {
-      energy: `≈ charging your phone for ${formatDuration(phoneChargeSeconds)}`,
+      energy: energyComparison(totalEnergyWh),
       water: `≈ ${fmtSmall(sipsOfWater)} sips of water`,
-      carbon: `≈ driving ${fmtInt(drivingMeters)}m`
+      carbon: carbonComparison(co2Grams)
     }
   }
 }

@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react"
 
-import { formatGrams, formatMl, formatWh } from "~lib/calculator"
+import {
+  carbonComparison,
+  energyComparison,
+  formatGrams,
+  formatMl,
+  formatWh,
+  sessionEnergySentence
+} from "~lib/calculator"
 import { TASK_LABELS, type TaskType } from "~lib/classifier"
 import type { SessionData } from "~lib/session"
 
@@ -8,6 +15,11 @@ import { DropletIcon, TreeIcon, XIcon } from "./icons"
 import { FONT_STACK, getSurface, type Surface } from "./OverlayBar"
 
 const SPRING = "cubic-bezier(0.16, 1, 0.3, 1)"
+
+const SHINE_KEYFRAMES = `@keyframes offprint-shine {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(440%); }
+}`
 
 const TASK_TIER: Record<TaskType, "low" | "medium" | "high"> = {
   text_generation: "low",
@@ -82,8 +94,9 @@ const StatCard = ({
           style={{
             fontSize: 10,
             color: surface.textSecondary,
-            opacity: 0.85,
-            marginTop: 2
+            opacity: 0.7,
+            marginTop: 2,
+            fontStyle: "italic"
           }}>
           {sub}
         </div>
@@ -111,6 +124,7 @@ const TaskBreakdown = ({
     <div style={{ marginTop: 12 }}>
       <div
         style={{
+          position: "relative",
           height: 8,
           borderRadius: 4,
           overflow: "hidden",
@@ -127,6 +141,20 @@ const TaskBreakdown = ({
             }}
           />
         ))}
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            height: "100%",
+            width: "30%",
+            background:
+              "linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.18) 50%, transparent 70%)",
+            pointerEvents: "none",
+            animation: "offprint-shine 3s linear infinite"
+          }}
+        />
       </div>
       <div
         style={{
@@ -252,12 +280,10 @@ export const SessionPanel = ({
   if (!mounted) return null
 
   const t = session.totals
-  const totalTokens = t.inputTokens + t.estimatedOutputTokens
-  const googleSearches = t.co2Grams / 0.2
-  const sips = t.waterMl / 25
   const offsetCost = (t.co2Grams * 0.015) / 1000
   const costStr =
     offsetCost < 0.01 ? "< $0.01" : `$${offsetCost.toFixed(2)}`
+  const sessionLine = sessionEnergySentence(t.energyWh)
 
   return (
     <div
@@ -271,6 +297,8 @@ export const SessionPanel = ({
         width: 340,
         maxHeight: 520,
         overflowY: "auto",
+        scrollbarWidth: "thin",
+        scrollbarColor: `${surface.divider} transparent`,
         opacity: open ? 1 : 0,
         transform: open
           ? "translateY(0) scale(1)"
@@ -290,9 +318,13 @@ export const SessionPanel = ({
           backdropFilter: "blur(16px) saturate(120%)",
           WebkitBackdropFilter: "blur(16px) saturate(120%)",
           border: `1px solid ${surface.border}`,
-          boxShadow: surface.shadow,
-          color: surface.text
+          boxShadow: `${surface.shadow}, inset 0 1px 0 ${
+            dark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.5)"
+          }`,
+          color: surface.text,
+          fontVariantNumeric: "tabular-nums"
         }}>
+        <style>{SHINE_KEYFRAMES}</style>
         <div
           style={{
             display: "flex",
@@ -335,36 +367,43 @@ export const SessionPanel = ({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 1fr",
+            gridTemplateColumns: "1fr 1fr 1fr",
             gap: 8
           }}>
           <StatCard
             surface={surface}
             dark={dark}
             value={String(t.promptCount)}
-            label="prompts sent"
+            label="prompts"
           />
           <StatCard
             surface={surface}
             dark={dark}
-            value={totalTokens.toLocaleString()}
-            label="total tokens"
+            value={`${formatWh(t.energyWh)} Wh`}
+            label="energy"
+            sub={energyComparison(t.energyWh)}
           />
           <StatCard
             surface={surface}
             dark={dark}
             value={`${formatGrams(t.co2Grams)}g`}
             label="CO₂"
-            sub={`≈ ${Math.round(googleSearches).toLocaleString()} Google searches`}
-          />
-          <StatCard
-            surface={surface}
-            dark={dark}
-            value={`${formatMl(t.waterMl)} mL`}
-            label="water"
-            sub={`≈ ${sips < 1 ? sips.toFixed(1) : Math.round(sips)} sips`}
+            sub={carbonComparison(t.co2Grams)}
           />
         </div>
+
+        {sessionLine ? (
+          <div
+            style={{
+              marginTop: 10,
+              fontSize: 12,
+              fontStyle: "italic",
+              color: surface.textSecondary,
+              lineHeight: 1.4
+            }}>
+            This session used as much energy as {sessionLine}.
+          </div>
+        ) : null}
 
         <TaskBreakdown session={session} surface={surface} />
 
@@ -376,51 +415,57 @@ export const SessionPanel = ({
           }}
         />
 
-        <div style={{ fontSize: 14, fontWeight: 600 }}>
-          <span style={{ color: "#10B981" }}>Off</span>
-          <span style={{ color: surface.text }}>set your </span>
-          <span style={{ color: "#10B981" }}>foot</span>
-          <span style={{ color: surface.text }}>print</span>
-        </div>
         <div
           style={{
-            fontSize: 12,
-            color: surface.textSecondary,
-            marginTop: 2,
-            marginBottom: 10
+            background:
+              "linear-gradient(135deg, rgba(16,185,129,0.08) 0%, rgba(16,185,129,0.03) 100%)",
+            border: "1px solid rgba(16,185,129,0.15)",
+            borderRadius: 12,
+            padding: 16
           }}>
-          Neutralize this session's impact
-        </div>
-
-        <div style={{ display: "flex", gap: 8 }}>
-          <OffsetButton
-            color="#10B981"
-            bg="rgba(16,185,129,0.12)"
-            hoverBg="rgba(16,185,129,0.2)"
-            border="rgba(16,185,129,0.2)"
+          <a
             href="https://onetreeplanted.org/products/plant-trees"
-            icon={<TreeIcon size={14} color="#10B981" />}
-            label="Offset Carbon"
-          />
-          <OffsetButton
-            color="#3B82F6"
-            bg="rgba(59,130,246,0.12)"
-            hoverBg="rgba(59,130,246,0.2)"
-            border="rgba(59,130,246,0.2)"
-            href="https://water.org/donate/"
-            icon={<DropletIcon size={14} color="#3B82F6" />}
-            label="Offset Water"
-          />
-        </div>
-
-        <div
-          style={{
-            marginTop: 8,
-            fontSize: 11,
-            fontStyle: "italic",
-            color: surface.textSecondary
-          }}>
-          Estimated offset cost: {costStr}
+            target="_blank"
+            rel="noopener noreferrer"
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              width: "100%",
+              padding: 12,
+              borderRadius: 10,
+              background: "rgba(16,185,129,0.15)",
+              border: "1px solid rgba(16,185,129,0.2)",
+              color: "#10B981",
+              fontSize: 14,
+              fontWeight: 600,
+              textDecoration: "none",
+              cursor: "pointer",
+              boxSizing: "border-box",
+              transition: "background 150ms ease, transform 150ms ease"
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "rgba(16,185,129,0.25)"
+              e.currentTarget.style.transform = "scale(1.01)"
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "rgba(16,185,129,0.15)"
+              e.currentTarget.style.transform = "scale(1)"
+            }}>
+            <TreeIcon size={16} color="#10B981" />
+            Offset Your Impact
+          </a>
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 10,
+              color: surface.textSecondary,
+              opacity: 0.75
+            }}>
+            Your session's CO₂ offset costs {costStr}
+          </div>
         </div>
 
         <div

@@ -23,6 +23,7 @@
     "@types/react-dom": "18.2.18",
     "postcss": "8.4.33",
     "prettier": "3.2.4",
+    "sharp": "^0.34.5",
     "typescript": "5.3.3"
   },
   "manifest": {

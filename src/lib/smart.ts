@@ -35,9 +35,25 @@ const TOPIC_STOPWORDS = new Set([
   "such", "than", "too", "only", "even", "still"
 ])
 
-function extractTopic(text: string, max = 3): string | null {
-  const tokens = text
-    .toLowerCase()
+function extractTopic(text: string, max = 4): string | null {
+  // Prefer text after a topic preposition: about / for / on / regarding /
+  // of / called / titled. Pull up to 6 words after the preposition,
+  // strip stopwords, then truncate to max words.
+  const lowered = text.toLowerCase()
+  const re =
+    /\b(about|regarding|on the topic of|for|on|of|called|titled)\s+([^.?!,;:\n]{3,80})/i
+  const m = lowered.match(re)
+  if (m && m[2]) {
+    const phrase = m[2]
+      .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 1 && !TOPIC_STOPWORDS.has(w))
+      .slice(0, max)
+      .join(" ")
+    if (phrase.length > 0) return phrase
+  }
+  // Fallback: first significant words anywhere in the text
+  const tokens = lowered
     .replace(/[^\p{L}\p{N}\s-]/gu, " ")
     .split(/\s+/)
     .filter((w) => w.length > 2 && !TOPIC_STOPWORDS.has(w))
@@ -57,8 +73,17 @@ const TEMPLATES: Record<TaskType, Array<(text: string) => string>> = {
   text_generation: [
     (t) => {
       const topic = extractTopic(t)
+      if (topic) {
+        return `What angle on ${topic}? Policy, science, economics, or personal impact? Specifying your angle saves a full rewrite.`
+      }
+      return "What angle do you want? Specifying your perspective up front saves a full rewrite."
+    },
+    (t) => {
+      const topic = extractTopic(t)
       const len = extractLengthHint(t)
-      const lead = topic ? `Ask for an outline on "${topic}" first` : "Ask for an outline first"
+      const lead = topic
+        ? `Ask for an outline on ${topic} first`
+        : "Ask for an outline first"
       const tail = len
         ? `This avoids rewriting ${len} if the angle is wrong.`
         : "This avoids rewriting a long draft if the angle is wrong."
@@ -66,11 +91,9 @@ const TEMPLATES: Record<TaskType, Array<(text: string) => string>> = {
     },
     (t) => {
       const topic = extractTopic(t)
-      const subject = topic ? `on "${topic}"` : "for this piece"
+      const subject = topic ? `on ${topic}` : "for this piece"
       return `Specify audience, tone, and 3 must-cover points ${subject}. A focused brief beats two regenerations.`
-    },
-    () =>
-      "Request the introduction and conclusion only first. If those land, the body almost writes itself in one shot."
+    }
   ],
   text_short: [
     () =>
@@ -79,8 +102,8 @@ const TEMPLATES: Record<TaskType, Array<(text: string) => string>> = {
   code_generation: [
     (t) => {
       const topic = extractTopic(t)
-      const subject = topic ? `for "${topic}"` : "for this code"
-      return `Specify language, framework version, and one constraint (e.g., 'no external deps') ${subject} before generating.`
+      const subject = topic ? `for your ${topic}` : "here"
+      return `What language and framework ${subject}? Specifying e.g. 'React with TypeScript' vs just 'a website' eliminates a full rewrite cycle.`
     },
     () =>
       "Ask for the function signature and a 3-line plan first. Approve the approach, then request the implementation.",
@@ -96,8 +119,10 @@ const TEMPLATES: Record<TaskType, Array<(text: string) => string>> = {
   image_generation: [
     (t) => {
       const topic = extractTopic(t, 4)
-      const subject = topic ? `For "${topic}", specify` : "Specify"
-      return `${subject} style (photorealistic, watercolor, 3D), aspect ratio, and mood. Each regeneration costs as much as ~60 text prompts.`
+      const lead = topic
+        ? `For your ${topic} image, what style`
+        : "What style"
+      return `${lead} — photorealistic, illustration, watercolor, flat design? Nailing the style first prevents 3-4 regenerations at 60x the cost each.`
     },
     () =>
       "Describe lighting, composition, and color palette up front. Vague image prompts average 4-6 regenerations; specific ones land in 1-2."
@@ -291,23 +316,57 @@ const CONTEXT_RULES: ContextRule[] = [
     }
   },
 
-  // Iteration / session signals
-  {
-    id: "long_iteration",
-    match: ({ messageCount }) => (messageCount ?? 0) >= 5,
-    build: ({ messageCount }) =>
-      `You've sent ${messageCount} messages. Consolidate the remaining feedback into one detailed prompt — each round-trip re-processes the prior context.`
-  },
-  {
-    id: "batch_translations",
-    match: ({ classification, recentTaskTypes }) =>
-      classification.taskType === "translation" &&
-      (recentTaskTypes?.filter((t) => t === "translation").length ?? 0) >= 2,
-    build: () =>
-      "You've been translating one-at-a-time. Batch them into a numbered list in a single prompt — same result, a fraction of the per-request overhead."
-  },
-
   // Prompt-shape signals
+  {
+    id: "google_it",
+    match: ({ text, classification }) => {
+      const t = classification.taskType
+      if (t !== "text_short" && t !== "conversation") return false
+      const trimmed = text.trim()
+      if (trimmed.length === 0 || trimmed.length >= 100) return false
+      const l = trimmed.toLowerCase()
+      const lookups = [
+        "what is",
+        "what's",
+        "whats ",
+        "who is",
+        "who's",
+        "when did",
+        "when was",
+        "when is",
+        "where is",
+        "where's",
+        "how old is",
+        "how tall is",
+        "how long is",
+        "how big is",
+        "how far is",
+        "how much is",
+        "how many",
+        "what year",
+        "what time",
+        "define ",
+        "meaning of",
+        "capital of",
+        "population of",
+        "weather in",
+        "convert ",
+        "translate "
+      ]
+      if (!lookups.some((p) => l.includes(p))) return false
+      return ![
+        "explain in detail",
+        "help me understand",
+        "write",
+        "create",
+        "analyze",
+        "compare in depth",
+        "why does"
+      ].some((p) => l.includes(p))
+    },
+    build: () =>
+      "Try a quick Google search instead — factual lookups answer in milliseconds and use a fraction of the energy."
+  },
   {
     id: "multi_request",
     match: ({ text, classification }) => {

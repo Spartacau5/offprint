@@ -84,14 +84,6 @@ export const NUDGE_RULES: NudgeRule[] = [
     conflictsWith: ["LONG_PROMPT"]
   },
   {
-    id: "REPEAT_ITERATION",
-    priority: 2,
-    condition: ({ messageCount }) => messageCount >= 4,
-    message: ({ messageCount }) =>
-      `You've sent ${messageCount} messages. Try consolidating remaining feedback into one detailed prompt to reduce back-and-forth.`,
-    iconName: "refresh"
-  },
-  {
     id: "MULTI_REQUEST",
     priority: 2,
     condition: ({ text, tokens }) =>
@@ -286,6 +278,172 @@ export const NUDGE_RULES: NudgeRule[] = [
     message:
       "You have a file attached but your prompt doesn't seem to reference it. Unused attachments still get processed — remove it if unneeded.",
     iconName: "search"
+  },
+  {
+    id: "GOOGLE_IT",
+    priority: 2,
+    taskSpecific: true,
+    condition: ({ text, charCount, classification }) => {
+      if (charCount >= 80) return false
+      const t = classification.taskType
+      if (t !== "text_short" && t !== "conversation") return false
+      const l = lower(text)
+      const lookups = [
+        "what is",
+        "what's",
+        "whats ",
+        "who is",
+        "who's",
+        "whos ",
+        "when did",
+        "when was",
+        "when is",
+        "where is",
+        "where's",
+        "wheres ",
+        "how old is",
+        "how tall is",
+        "how much is",
+        "what year",
+        "what time",
+        "define ",
+        "meaning of",
+        "capital of",
+        "population of",
+        "weather in",
+        "convert ",
+        "how many",
+        "what does",
+        "translate "
+      ]
+      if (!lookups.some((p) => l.includes(p))) return false
+      const blockers = [
+        "explain in detail",
+        "help me understand",
+        "write",
+        "create",
+        "analyze",
+        "compare in depth",
+        "why does"
+      ]
+      return !blockers.some((p) => l.includes(p))
+    },
+    message:
+      "A quick Google search might answer this faster — and uses a fraction of the energy of an AI query.",
+    iconName: "search"
+  },
+  {
+    id: "DIY_TASK",
+    priority: 1,
+    taskSpecific: true,
+    condition: ({ text }) => {
+      const l = lower(text)
+      return [
+        "remind me to",
+        "set a timer",
+        "set an alarm",
+        "add to my calendar",
+        "what's on my schedule",
+        "whats on my schedule",
+        "send an email to",
+        "create a reminder",
+        "add a note"
+      ].some((p) => l.includes(p))
+    },
+    message:
+      "Your device can handle this natively — try your calendar, reminders, or assistant app. Zero compute needed.",
+    iconName: "lightbulb"
+  },
+  {
+    id: "SIMPLE_MATH",
+    priority: 1,
+    taskSpecific: true,
+    condition: ({ text, charCount }) => {
+      if (charCount >= 60) return false
+      const l = lower(text)
+      // Pure math expression
+      if (/^[\d\s+\-*/x().,%=?$£€¥]+$/i.test(text.trim())) return true
+      const patterns = [
+        "calculate",
+        "what is",
+        "what's"
+      ]
+      const ops = [
+        " plus ",
+        " minus ",
+        " times ",
+        " divided by ",
+        " percentage of ",
+        " percent of ",
+        " % of ",
+        " in usd",
+        " in eur",
+        " in gbp",
+        " to celsius",
+        " to fahrenheit",
+        " to kg",
+        " to lbs",
+        " to km",
+        " to miles"
+      ]
+      if (
+        patterns.some((p) => l.includes(p)) &&
+        (ops.some((o) => l.includes(o)) ||
+          /\d+\s*[+\-*/x]\s*\d+/.test(l))
+      ) {
+        return true
+      }
+      return false
+    },
+    message:
+      "Your phone's calculator or a quick search handles this instantly with a fraction of the energy.",
+    iconName: "scissors"
+  },
+  {
+    id: "CONFIRM_BEFORE_BUILD",
+    priority: 3,
+    taskSpecific: true,
+    condition: ({ text, tokens, classification }) => {
+      const t = classification.taskType
+      if (
+        t !== "code_generation" &&
+        t !== "file_creation" &&
+        t !== "image_generation"
+      )
+        return false
+      if (tokens <= 150) return false
+      const l = lower(text)
+      const confirming = [
+        "go ahead",
+        "yes build it",
+        "confirmed",
+        "looks good, now create",
+        "looks good now create",
+        "proceed"
+      ]
+      if (confirming.some((p) => l.includes(p))) return false
+      const commaCount = (text.match(/,/g) ?? []).length
+      const hasMulti =
+        commaCount >= 3 ||
+        /\b(with|that includes|which has|make sure it|it should)\b/.test(l) ||
+        /^\s*\d+\.\s/m.test(text)
+      return hasMulti
+    },
+    message:
+      "Complex builds often need revisions. Ask the AI to outline its plan first — confirming direction before generation can save 2-3 full rebuilds.",
+    iconName: "target",
+    conflictsWith: ["FULL_GENERATION_SPLIT", "CODE_PLANNING"]
+  },
+  {
+    id: "OVERLY_SPECIFIC_IMAGE",
+    priority: 2,
+    taskSpecific: true,
+    condition: ({ tokens, classification }) =>
+      classification.taskType === "image_generation" && tokens > 200,
+    message:
+      "Detailed image prompts often miss on the first try. Start with the core concept in 1-2 sentences, then refine — each image generation uses as much energy as 60 text responses.",
+    iconName: "lightbulb",
+    conflictsWith: ["IMAGE_AWARENESS"]
   },
   {
     id: "EDITING_SCOPE",

@@ -66,9 +66,12 @@ export const SessionButton = ({
           backdropFilter: "blur(16px) saturate(120%)",
           WebkitBackdropFilter: "blur(16px) saturate(120%)",
           border: `1px solid ${surface.border}`,
-          boxShadow: surface.shadow,
+          boxShadow: `${surface.shadow}, inset 0 1px 0 ${
+            dark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.5)"
+          }`,
           color: surface.text,
           fontFamily: FONT_STACK,
+          fontVariantNumeric: "tabular-nums",
           animation:
             "offprint-session-in 300ms ease-out, offprint-session-pulse 30s ease-in-out 30s infinite",
           transform: hover ? "scale(1.04)" : "scale(1)",

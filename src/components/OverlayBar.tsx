@@ -58,10 +58,28 @@ const LEVEL_LABELS: Record<ImpactLevel, string> = {
   high: "High"
 }
 
-const LEVEL_COLORS: Record<ImpactLevel, { bg: string; fg: string }> = {
-  low: { bg: "rgba(16,185,129,0.15)", fg: "#10B981" },
-  medium: { bg: "rgba(245,158,11,0.15)", fg: "#F59E0B" },
-  high: { bg: "rgba(239,68,68,0.15)", fg: "#EF4444" }
+const LEVEL_COLORS: Record<
+  ImpactLevel,
+  { bg: string; fg: string; fgLight: string; glow: string }
+> = {
+  low: {
+    bg: "rgba(16,185,129,0.15)",
+    fg: "#10B981",
+    fgLight: "#059669",
+    glow: "0 0 8px rgba(16,185,129,0.3)"
+  },
+  medium: {
+    bg: "rgba(245,158,11,0.15)",
+    fg: "#F59E0B",
+    fgLight: "#D97706",
+    glow: "0 0 8px rgba(245,158,11,0.3)"
+  },
+  high: {
+    bg: "rgba(239,68,68,0.15)",
+    fg: "#EF4444",
+    fgLight: "#DC2626",
+    glow: "0 0 8px rgba(239,68,68,0.3)"
+  }
 }
 
 export type OverlayBarProps = {
@@ -130,6 +148,8 @@ export const OverlayBar = ({
     active: false,
     last: { x: 0, y: 0 }
   })
+  const btnRef = useRef<HTMLButtonElement | null>(null)
+  const springRef = useRef<number | null>(null)
 
   if (!rect) return null
 
@@ -169,6 +189,32 @@ export const OverlayBar = ({
     }
   }
 
+  const animateOffsetTo = (
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    duration = 280
+  ) => {
+    if (springRef.current !== null) cancelAnimationFrame(springRef.current)
+    const start = performance.now()
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / duration)
+      // ease-in-out cubic
+      const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+      const next = {
+        x: from.x + (to.x - from.x) * eased,
+        y: from.y + (to.y - from.y) * eased
+      }
+      onDrag(next)
+      if (t < 1) {
+        springRef.current = requestAnimationFrame(tick)
+      } else {
+        springRef.current = null
+        onDragEnd(to)
+      }
+    }
+    springRef.current = requestAnimationFrame(tick)
+  }
+
   const onPointerUp = (e: React.PointerEvent) => {
     if (!dragRef.current.active) return
     const wasDrag = dragRef.current.moved
@@ -178,11 +224,35 @@ export const OverlayBar = ({
     } catch {
       /* noop */
     }
-    if (wasDrag) {
-      onDragEnd(dragRef.current.last)
-    } else {
+    if (!wasDrag) {
       onToggle()
+      return
     }
+
+    // Clamp the bar's actual rendered rect inside the viewport. If it spilled
+    // outside, compute the offset correction needed and spring back.
+    const last = dragRef.current.last
+    const btn = btnRef.current
+    const margin = 8
+    if (!btn) {
+      onDragEnd(last)
+      return
+    }
+    const r = btn.getBoundingClientRect()
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    let dx = 0
+    let dy = 0
+    if (r.left < margin) dx = margin - r.left
+    else if (r.right > vw - margin) dx = vw - margin - r.right
+    if (r.top < margin) dy = margin - r.top
+    else if (r.bottom > vh - margin) dy = vh - margin - r.bottom
+
+    if (dx === 0 && dy === 0) {
+      onDragEnd(last)
+      return
+    }
+    animateOffsetTo(last, { x: last.x + dx, y: last.y + dy })
   }
 
   return (
@@ -195,10 +265,11 @@ export const OverlayBar = ({
         zIndex: 2147483640,
         opacity: visible ? 1 : 0,
         pointerEvents: visible ? "auto" : "none",
-        transition: "opacity 200ms ease",
+        transition: visible ? "opacity 200ms ease" : "opacity 150ms ease",
         fontFamily: FONT_STACK
       }}>
       <button
+        ref={btnRef}
         type="button"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -222,9 +293,13 @@ export const OverlayBar = ({
           backdropFilter: "blur(16px) saturate(120%)",
           WebkitBackdropFilter: "blur(16px) saturate(120%)",
           border: `1px solid ${surface.border}`,
-          boxShadow: surface.shadow,
+          boxShadow: `${surface.shadow}, inset 0 1px 0 ${
+            dark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.5)"
+          }`,
           color: surface.text,
           fontFamily: FONT_STACK,
+          fontFeatureSettings: '"tnum"',
+          fontVariantNumeric: "tabular-nums",
           transition:
             "background 300ms ease, border-color 300ms ease, color 300ms ease, box-shadow 300ms ease"
         }}>
@@ -268,8 +343,10 @@ export const OverlayBar = ({
             textTransform: "uppercase",
             letterSpacing: "0.05em",
             background: colors.bg,
-            color: colors.fg,
-            transition: "background 300ms ease, color 300ms ease"
+            color: dark ? colors.fg : colors.fgLight,
+            textShadow: dark ? colors.glow : "none",
+            transition:
+              "background 300ms ease, color 300ms ease, text-shadow 300ms ease"
           }}>
           {LEVEL_LABELS[impact.impactLevel]}
         </span>

@@ -19,7 +19,7 @@ import {
   getTextContent,
   type TextInputElement
 } from "~lib/platforms"
-import { addPrompt, useSession } from "~lib/session"
+import { addPrompt, saveCurrentSession, useSession } from "~lib/session"
 import { smartAnalyze, type SmartSuggestion } from "~lib/smart"
 import { useChromeBoolean } from "~lib/storage"
 import { observeTheme } from "~lib/theme"
@@ -117,7 +117,15 @@ const Overlay = () => {
 
   useEffect(() => {
     console.log(`${LOG_PREFIX} content script loaded on`, getPlatform())
-    return observeTheme(setDark)
+    const stop = observeTheme(setDark)
+    const onUnload = () => saveCurrentSession()
+    window.addEventListener("beforeunload", onUnload)
+    const autoSave = window.setInterval(() => saveCurrentSession(), 60_000)
+    return () => {
+      stop()
+      window.removeEventListener("beforeunload", onUnload)
+      window.clearInterval(autoSave)
+    }
   }, [])
 
   const lastNonEmptyRef = useRef("")
@@ -345,7 +353,10 @@ const Overlay = () => {
         open={sessionOpen}
         session={session}
         dark={dark}
-        onRequestClose={() => setSessionOpen(false)}
+        onRequestClose={() => {
+          setSessionOpen(false)
+          saveCurrentSession()
+        }}
       />
     </>
   )

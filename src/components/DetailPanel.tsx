@@ -113,6 +113,12 @@ const AttachmentsSection = ({
           return (
             <div
               key={`${a.filename}-${i}`}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.background = "rgba(255,255,255,0.05)")
+              }
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.background = "rgba(255,255,255,0.02)")
+              }
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -120,7 +126,8 @@ const AttachmentsSection = ({
                 height: ROW_H,
                 padding: "0 8px",
                 borderRadius: 6,
-                background: "rgba(255,255,255,0.02)"
+                background: "rgba(255,255,255,0.02)",
+                transition: "background 150ms ease"
               }}>
               <Icon size={13} color={surface.textSecondary} />
               <span
@@ -174,7 +181,7 @@ const SmartToggle = ({
       width: 30,
       height: 18,
       borderRadius: 9,
-      background: on ? "#10B981" : surface.divider,
+      background: on ? "#10B981" : "rgba(255,255,255,0.15)",
       position: "relative",
       transition: "background 200ms ease",
       display: "inline-block",
@@ -424,7 +431,12 @@ export const DetailPanel = ({
           boxShadow: surface.shadow,
           color: surface.text,
           maxHeight: `${maxPanelHeight}px`,
-          overflowY: "auto"
+          overflowY: "auto",
+          boxShadow: `${surface.shadow}, inset 0 1px 0 ${
+            dark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.5)"
+          }`,
+          scrollbarWidth: "thin",
+          scrollbarColor: `${surface.divider} transparent`
         }}>
         <div
           style={{
@@ -500,13 +512,15 @@ export const DetailPanel = ({
           surface={surface}
         />
         <div style={{ height: 1, background: surface.divider }} />
-        <Row
-          icon={<DropletIcon size={16} color="#3B82F6" />}
-          label="Water"
-          value={`${formatMl(water)} mL`}
-          comparison={impact.comparisons.water}
-          surface={surface}
-        />
+        <div style={{ opacity: 0.6 }}>
+          <Row
+            icon={<DropletIcon size={14} color="#3B82F6" />}
+            label="Water"
+            value={`${formatMl(water)} mL`}
+            comparison={impact.comparisons.water}
+            surface={surface}
+          />
+        </div>
         <div style={{ height: 1, background: surface.divider }} />
         <Row
           icon={<LeafIcon size={16} color="#10B981" />}
