@@ -17,6 +17,149 @@ export type TaskType =
 
 export type Confidence = "high" | "medium" | "low"
 
+export type AttachmentType =
+  | "image"
+  | "pdf"
+  | "document"
+  | "spreadsheet"
+  | "code"
+  | "data"
+  | "video"
+  | "audio"
+  | "archive"
+  | "unknown"
+
+export interface DetectedAttachment {
+  filename: string
+  extension: string
+  type: AttachmentType
+  estimatedSizeMB: number
+  estimatedTokens: number
+  energyMultiplier: number
+}
+
+const EXT_MAP: Record<string, AttachmentType> = {
+  png: "image", jpg: "image", jpeg: "image", gif: "image", webp: "image",
+  svg: "image", bmp: "image", tiff: "image", tif: "image", heic: "image",
+  pdf: "pdf",
+  docx: "document", doc: "document", txt: "document", rtf: "document",
+  md: "document", odt: "document",
+  xlsx: "spreadsheet", xls: "spreadsheet", csv: "spreadsheet", tsv: "spreadsheet",
+  py: "code", js: "code", ts: "code", jsx: "code", tsx: "code", java: "code",
+  cpp: "code", c: "code", h: "code", hpp: "code", html: "code", css: "code",
+  go: "code", rs: "code", rb: "code", php: "code", swift: "code", kt: "code",
+  json: "data", xml: "data", yaml: "data", yml: "data", toml: "data",
+  mp4: "video", mov: "video", avi: "video", webm: "video", mkv: "video",
+  mp3: "audio", wav: "audio", m4a: "audio", ogg: "audio", flac: "audio",
+  zip: "archive", tar: "archive", gz: "archive", rar: "archive", "7z": "archive"
+}
+
+export function classifyAttachmentByExtension(
+  filename: string,
+  sizeMB?: number
+): DetectedAttachment {
+  const ext = (filename.split(".").pop() ?? "").toLowerCase()
+  const type = EXT_MAP[ext] ?? "unknown"
+  const lower = filename.toLowerCase()
+
+  let estimatedSizeMB = sizeMB ?? 0
+  let estimatedTokens = 1000
+  let energyMultiplier = 1
+
+  switch (type) {
+    case "image": {
+      estimatedSizeMB = sizeMB ?? 2
+      if (/screenshot|screen[ _-]?shot|img_/i.test(filename)) estimatedTokens = 800
+      else if (/photo|portrait|landscape|dsc|raw/i.test(filename)) estimatedTokens = 1500
+      else estimatedTokens = 1000
+      energyMultiplier = 3
+      break
+    }
+    case "pdf": {
+      let pages: number
+      if (/report|annual|whitepaper|thesis|manual|paper|book/i.test(lower)) {
+        estimatedSizeMB = sizeMB ?? 5
+        pages = sizeMB ? Math.round(sizeMB * 6) : 30
+      } else if (/resume|cv|letter|invoice|receipt|bill/i.test(lower)) {
+        estimatedSizeMB = sizeMB ?? 0.5
+        pages = sizeMB ? Math.round(sizeMB * 6) : 2
+      } else {
+        estimatedSizeMB = sizeMB ?? 2
+        pages = sizeMB ? Math.round(sizeMB * 6) : 10
+      }
+      estimatedTokens = Math.max(200, pages * 800)
+      energyMultiplier = 1.5
+      break
+    }
+    case "document": {
+      const pages = sizeMB ? Math.round(sizeMB * 5) : 5
+      estimatedSizeMB = sizeMB ?? 0.3
+      estimatedTokens = Math.max(150, pages * 700)
+      energyMultiplier = 1.2
+      break
+    }
+    case "spreadsheet": {
+      estimatedSizeMB = sizeMB ?? 1
+      estimatedTokens = sizeMB ? Math.round(sizeMB * 5000) : 3000
+      if (/data|export|database|dataset|log/i.test(lower)) estimatedTokens *= 2
+      energyMultiplier = 2
+      break
+    }
+    case "code": {
+      const lines = 200
+      estimatedSizeMB = sizeMB ?? 0.05
+      estimatedTokens = lines * 10
+      energyMultiplier = 1.5
+      break
+    }
+    case "data": {
+      estimatedSizeMB = sizeMB ?? 0.5
+      estimatedTokens = sizeMB ? Math.round(sizeMB * 4000) : 2000
+      energyMultiplier = 1.5
+      break
+    }
+    case "video": {
+      estimatedSizeMB = sizeMB ?? 20
+      estimatedTokens = 5000
+      energyMultiplier = 50
+      break
+    }
+    case "audio": {
+      estimatedSizeMB = sizeMB ?? 5
+      estimatedTokens = 3000
+      energyMultiplier = 10
+      break
+    }
+    case "archive": {
+      estimatedSizeMB = sizeMB ?? 5
+      estimatedTokens = 3000
+      energyMultiplier = 2
+      break
+    }
+    default: {
+      estimatedSizeMB = sizeMB ?? 0.5
+      estimatedTokens = 500
+      energyMultiplier = 1
+    }
+  }
+
+  return {
+    filename,
+    extension: ext,
+    type,
+    estimatedSizeMB,
+    estimatedTokens,
+    energyMultiplier
+  }
+}
+
+export function estimateAttachmentImpact(a: DetectedAttachment): {
+  tokens: number
+  energyMultiplier: number
+} {
+  return { tokens: a.estimatedTokens, energyMultiplier: a.energyMultiplier }
+}
+
 export interface ClassificationResult {
   taskType: TaskType
   confidence: Confidence
@@ -159,6 +302,42 @@ const RE_TEXT_MAKEME = makeMe(TEXT_NOUNS)
 const RE_DATA_SUMMARY_MAKEME =
   /\b(make|build|create|generate)\s+me\s+(a|an|the)\s+summary\s+of\s+(this|the|my)\s+data\b/i
 
+// Broader verb+(determiner)?+noun matcher: covers "make another image",
+// "create a new picture", "design another logo", "draw me a sketch", etc.
+const verbNoun = (verbs: string[], nouns: string[]): RegExp => {
+  const v = verbs.join("|")
+  const n = nouns.map(escapeRe).join("|")
+  return new RegExp(
+    `\\b(${v})\\s+(?:me\\s+)?(?:a|an|the|another|new|one\\s+more|some)?\\s*(${n})\\b`,
+    "i"
+  )
+}
+
+const RE_IMAGE_VERBNOUN = verbNoun(
+  ["make", "create", "generate", "build", "design", "draw", "render"],
+  IMAGE_NOUNS
+)
+const RE_VIDEO_VERBNOUN = verbNoun(
+  ["make", "create", "generate", "build", "render", "produce"],
+  VIDEO_NOUNS
+)
+const RE_FILE_VERBNOUN = verbNoun(
+  ["make", "create", "generate", "build", "produce", "draft"],
+  FILE_NOUNS
+)
+const RE_CODE_VERBNOUN = verbNoun(
+  ["make", "create", "generate", "build", "develop", "code"],
+  CODE_NOUNS
+)
+const RE_DATA_VERBNOUN = verbNoun(
+  ["make", "create", "generate", "build", "produce"],
+  DATA_NOUNS
+)
+const RE_TEXT_VERBNOUN = verbNoun(
+  ["write", "make", "create", "generate", "draft", "compose"],
+  TEXT_NOUNS
+)
+
 const RULES: Array<{
   type: TaskType
   multiplier: number
@@ -196,7 +375,8 @@ const RULES: Array<{
       ]) ||
       hasWord(l, ["draw", "sketch"]) ||
       /\b(image|picture|photo|illustration|artwork) of\b/.test(l) ||
-      RE_IMAGE_MAKEME.test(l)
+      RE_IMAGE_MAKEME.test(l) ||
+      RE_IMAGE_VERBNOUN.test(l)
   },
   {
     type: "video_generation",
@@ -216,7 +396,8 @@ const RULES: Array<{
         "create a gif"
       ]) ||
       hasWord(l, ["animate"]) ||
-      RE_VIDEO_MAKEME.test(l)
+      RE_VIDEO_MAKEME.test(l) ||
+      RE_VIDEO_VERBNOUN.test(l)
   },
   {
     type: "file_creation",
@@ -252,7 +433,8 @@ const RULES: Array<{
       ]) ||
       (/(create|make|build|generate)\b.*\b(report|document|file)\b/.test(l) &&
         has(l, ["pdf", "docx", "xlsx", "pptx", "csv", "spreadsheet"])) ||
-      RE_FILE_MAKEME.test(l)
+      RE_FILE_MAKEME.test(l) ||
+      RE_FILE_VERBNOUN.test(l)
   },
   {
     type: "code_debug",
@@ -304,7 +486,8 @@ const RULES: Array<{
       /\b(in|using)\s+(python|javascript|typescript|react|node|go|rust|java|c\+\+|swift|kotlin|ruby|php)\b/.test(
         l
       ) ||
-      RE_CODE_MAKEME.test(l)
+      RE_CODE_MAKEME.test(l) ||
+      RE_CODE_VERBNOUN.test(l)
   },
   {
     type: "data_analysis",
@@ -327,7 +510,8 @@ const RULES: Array<{
       ]) ||
       hasWord(l, ["statistics"]) ||
       RE_DATA_MAKEME.test(l) ||
-      RE_DATA_SUMMARY_MAKEME.test(l)
+      RE_DATA_SUMMARY_MAKEME.test(l) ||
+      RE_DATA_VERBNOUN.test(l)
   },
   {
     type: "research",
@@ -411,7 +595,8 @@ const RULES: Array<{
       ]) ||
       has(l, ["create content", "blog post"]) ||
       /\bwrite\s+(me\s+)?(a|an|the)\b/.test(l) ||
-      RE_TEXT_MAKEME.test(l)
+      RE_TEXT_MAKEME.test(l) ||
+      RE_TEXT_VERBNOUN.test(l)
   },
   {
     type: "text_short",

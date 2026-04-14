@@ -1,4 +1,4 @@
-import type { ClassificationResult } from "./classifier"
+import type { ClassificationResult, DetectedAttachment } from "./classifier"
 
 export type ImpactLevel = "low" | "medium" | "high"
 
@@ -40,13 +40,20 @@ function fmtSmall(n: number): string {
 
 export function calculateImpact(
   characterCount: number,
-  classification?: ClassificationResult
+  classification?: ClassificationResult,
+  attachments?: DetectedAttachment[]
 ): ImpactResult {
   const inputTokens = Math.ceil(Math.max(0, characterCount) / 4)
   const outputTokens =
     classification?.estimatedOutputTokens ?? Math.max(150, inputTokens * 3)
-  const totalTokens = inputTokens + outputTokens
-  const multiplier = classification?.energyMultiplier ?? 1
+  const attachmentTokens = (attachments ?? []).reduce(
+    (s, a) => s + a.estimatedTokens,
+    0
+  )
+  const totalTokens = inputTokens + outputTokens + attachmentTokens
+  const baseMultiplier = classification?.energyMultiplier ?? 1
+  const attachMultipliers = (attachments ?? []).map((a) => a.energyMultiplier)
+  const multiplier = Math.max(baseMultiplier, ...attachMultipliers, 1)
 
   const baseEnergyWh = (totalTokens / 250) * 0.34
   const adjustedEnergyWh = baseEnergyWh * multiplier

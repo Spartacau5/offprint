@@ -3,16 +3,23 @@ import { useEffect, useMemo, useRef, useState } from "react"
 
 import { DetailPanel } from "~components/DetailPanel"
 import { OverlayBar, useTextareaRect } from "~components/OverlayBar"
+import { SessionButton } from "~components/SessionButton"
+import { SessionPanel } from "~components/SessionPanel"
 import { calculateImpact, estimateTokens } from "~lib/calculator"
-import { classifyPrompt, type TaskType } from "~lib/classifier"
+import {
+  classifyPrompt,
+  type DetectedAttachment,
+  type TaskType
+} from "~lib/classifier"
 import { evaluateNudges, type Nudge } from "~lib/nudges"
 import {
-  findSendButton,
+  detectAttachments,
   findTextarea,
   getPlatform,
   getTextContent,
   type TextInputElement
 } from "~lib/platforms"
+import { addPrompt, useSession } from "~lib/session"
 import { smartAnalyze, type SmartSuggestion } from "~lib/smart"
 import { useChromeBoolean } from "~lib/storage"
 import { observeTheme } from "~lib/theme"
@@ -37,14 +44,73 @@ function useDebounced<T>(value: T, delay: number): T {
 const Overlay = () => {
   const [el, setEl] = useState<TextInputElement | null>(null)
   const [text, setText] = useState("")
+  const [attachments, setAttachments] = useState<DetectedAttachment[]>([])
   const [dark, setDark] = useState(true)
   const [expanded, setExpanded] = useState(false)
-  const [messageCount, setMessageCount] = useState(0)
-  const [recentTaskTypes, setRecentTaskTypes] = useState<TaskType[]>([])
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
   const [smartMode, setSmartMode] = useChromeBoolean("smartMode", false)
   const [smartSuggestion, setSmartSuggestion] = useState<SmartSuggestion | null>(
     null
+  )
+  const [sessionOpen, setSessionOpen] = useState(false)
+  const session = useSession()
+  const [barOffset, setBarOffset] = useState<{ x: number; y: number }>({
+    x: 0,
+    y: 0
+  })
+  const [pathname, setPathname] = useState<string>(
+    typeof window !== "undefined" ? window.location.pathname : "/"
+  )
+
+  // Watch for SPA navigations and reset/restore the bar offset per chat.
+  useEffect(() => {
+    const check = () => {
+      if (window.location.pathname !== pathname) {
+        setPathname(window.location.pathname)
+      }
+    }
+    const id = window.setInterval(check, 400)
+    window.addEventListener("popstate", check)
+    return () => {
+      window.clearInterval(id)
+      window.removeEventListener("popstate", check)
+    }
+  }, [pathname])
+
+  // Load offset for the current path; default to 0,0 (i.e., new chat resets).
+  useEffect(() => {
+    const key = `offprint:bar-offset:${pathname}`
+    try {
+      chrome?.storage?.local?.get([key], (res) => {
+        const v = res?.[key]
+        if (
+          v &&
+          typeof v.x === "number" &&
+          typeof v.y === "number"
+        ) {
+          setBarOffset({ x: v.x, y: v.y })
+        } else {
+          setBarOffset({ x: 0, y: 0 })
+        }
+      })
+    } catch {
+      setBarOffset({ x: 0, y: 0 })
+    }
+  }, [pathname])
+
+  const persistBarOffset = (next: { x: number; y: number }) => {
+    setBarOffset(next)
+    try {
+      const key = `offprint:bar-offset:${window.location.pathname}`
+      chrome?.storage?.local?.set({ [key]: next })
+    } catch {
+      /* noop */
+    }
+  }
+  const messageCount = session.totals.promptCount
+  const recentTaskTypes: TaskType[] = useMemo(
+    () => session.prompts.slice(-5).map((p) => p.taskType as TaskType),
+    [session.prompts]
   )
 
   const lastSubmittedTextRef = useRef("")
@@ -54,92 +120,120 @@ const Overlay = () => {
     return observeTheme(setDark)
   }, [])
 
+  const lastNonEmptyRef = useRef("")
+  const lastFireAtRef = useRef(0)
+  const messageCountRef = useRef(0)
+
+  useEffect(() => {
+    messageCountRef.current = messageCount
+  }, [messageCount])
+
   useEffect(() => {
     let currentEl: TextInputElement | null = null
-    let currentSendBtn: HTMLElement | null = null
 
-    const onInput = () => {
-      if (!currentEl) return
-      setText(getTextContent(currentEl))
-    }
+    const lastAttachmentsRef = { current: [] as DetectedAttachment[] }
 
-    const onSubmit = (t: string) => {
+    const fireSubmit = (t: string) => {
       console.log(
         `${LOG_PREFIX} Message submitted — ~${estimateTokens(t)} tokens`
       )
-      const cls = classifyPrompt(t, messageCount)
+      const mc = messageCountRef.current
       lastSubmittedTextRef.current = t
-      setMessageCount((c) => c + 1)
-      setRecentTaskTypes((prev) => [...prev.slice(-4), cls.taskType])
+      addPrompt(t, mc, lastAttachmentsRef.current)
     }
 
-    const onKeydown = (e: KeyboardEvent) => {
-      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-        const t = currentEl ? getTextContent(currentEl) : ""
-        if (t.trim().length > 0) onSubmit(t)
+    const syncFromEl = () => {
+      if (!currentEl) return
+      const t = getTextContent(currentEl)
+      const trimmed = t.trim()
+      setText(t)
+      const found = detectAttachments(currentEl)
+      lastAttachmentsRef.current = found
+      setAttachments((prev) => {
+        if (
+          prev.length === found.length &&
+          prev.every((p, i) => p.filename === found[i].filename)
+        )
+          return prev
+        return found
+      })
+      if (trimmed.length === 0 && lastNonEmptyRef.current.length > 0) {
+        const now = Date.now()
+        if (now - lastFireAtRef.current > 400) {
+          lastFireAtRef.current = now
+          fireSubmit(lastNonEmptyRef.current)
+        }
+        lastNonEmptyRef.current = ""
+      } else if (trimmed.length > 0) {
+        lastNonEmptyRef.current = trimmed
       }
-    }
-
-    const onSendClick = () => {
-      const t = currentEl ? getTextContent(currentEl) : ""
-      if (t.trim().length > 0) onSubmit(t)
     }
 
     const detach = () => {
       if (currentEl) {
-        currentEl.removeEventListener("input", onInput)
-        currentEl.removeEventListener("keyup", onInput)
-        currentEl.removeEventListener("compositionend", onInput)
-        currentEl.removeEventListener("keydown", onKeydown)
-      }
-      if (currentSendBtn) {
-        currentSendBtn.removeEventListener("click", onSendClick)
+        currentEl.removeEventListener("input", syncFromEl)
+        currentEl.removeEventListener("keyup", syncFromEl)
+        currentEl.removeEventListener("compositionend", syncFromEl)
       }
       currentEl = null
-      currentSendBtn = null
     }
 
     const attach = () => {
       const next = findTextarea()
       if (next && next !== currentEl) {
+        // If old element had pending non-empty text and is now gone, treat as submit
+        if (
+          currentEl &&
+          !document.contains(currentEl) &&
+          lastNonEmptyRef.current.length > 0
+        ) {
+          const now = Date.now()
+          if (now - lastFireAtRef.current > 400) {
+            lastFireAtRef.current = now
+            fireSubmit(lastNonEmptyRef.current)
+          }
+          lastNonEmptyRef.current = ""
+        }
         detach()
         currentEl = next
-        next.addEventListener("input", onInput)
-        next.addEventListener("keyup", onInput)
-        next.addEventListener("compositionend", onInput)
-        next.addEventListener("keydown", onKeydown)
+        next.addEventListener("input", syncFromEl)
+        next.addEventListener("keyup", syncFromEl)
+        next.addEventListener("compositionend", syncFromEl)
         setEl(next)
-        setText(getTextContent(next))
+        const initial = getTextContent(next)
+        setText(initial)
+        lastNonEmptyRef.current = initial.trim()
         console.log(`${LOG_PREFIX} attached to text input`, next)
       } else if (!next && currentEl && !document.contains(currentEl)) {
+        if (lastNonEmptyRef.current.length > 0) {
+          const now = Date.now()
+          if (now - lastFireAtRef.current > 400) {
+            lastFireAtRef.current = now
+            fireSubmit(lastNonEmptyRef.current)
+          }
+          lastNonEmptyRef.current = ""
+        }
         detach()
         setEl(null)
         setText("")
-      }
-
-      const btn = findSendButton()
-      if (btn && btn !== currentSendBtn) {
-        if (currentSendBtn) {
-          currentSendBtn.removeEventListener("click", onSendClick)
-        }
-        currentSendBtn = btn
-        btn.addEventListener("click", onSendClick)
       }
     }
 
     attach()
     const observer = new MutationObserver(() => attach())
     observer.observe(document.body, { childList: true, subtree: true })
-    const interval = window.setInterval(attach, 2000)
+    const reattachInterval = window.setInterval(attach, 500)
+    const pollInterval = window.setInterval(syncFromEl, 250)
 
     return () => {
       observer.disconnect()
-      window.clearInterval(interval)
+      window.clearInterval(reattachInterval)
+      window.clearInterval(pollInterval)
       detach()
     }
-  }, [messageCount])
+  }, [])
 
-  const visible = text.trim().length > 0
+  const visible = text.trim().length > 0 || attachments.length > 0
   const rect = useTextareaRect(el, true)
 
   const debouncedText = useDebounced(text, 300)
@@ -148,8 +242,8 @@ const Overlay = () => {
     [debouncedText, messageCount]
   )
   const impact = useMemo(
-    () => calculateImpact(text.length, classification),
-    [text, classification]
+    () => calculateImpact(text.length, classification, attachments),
+    [text, classification, attachments]
   )
 
   useEffect(() => {
@@ -168,25 +262,42 @@ const Overlay = () => {
         charCount: debouncedText.length,
         messageCount,
         classification,
-        recentTaskTypes
+        recentTaskTypes,
+        attachments
       }),
-    [debouncedText, impact.tokens, messageCount, classification, recentTaskTypes]
+    [
+      debouncedText,
+      impact.tokens,
+      messageCount,
+      classification,
+      recentTaskTypes,
+      attachments
+    ]
   )
   const nudges = allNudges.filter((n) => !dismissed.has(n.id))
 
-  const smartDebounced = useDebounced(text, 1500)
+  const smartDebounced = useDebounced(text, 800)
   useEffect(() => {
     if (!smartMode) {
       setSmartSuggestion(null)
       return
     }
-    if (smartDebounced.trim().length < 50) {
+    const trimmed = smartDebounced.trim()
+    if (trimmed.length === 0) {
       setSmartSuggestion(null)
       return
     }
     const cls = classifyPrompt(smartDebounced, messageCount)
-    setSmartSuggestion(smartAnalyze(smartDebounced, cls))
-  }, [smartMode, smartDebounced, messageCount])
+    setSmartSuggestion(
+      smartAnalyze({
+        text: smartDebounced,
+        classification: cls,
+        attachments,
+        messageCount,
+        recentTaskTypes
+      })
+    )
+  }, [smartMode, smartDebounced, messageCount, attachments, recentTaskTypes])
 
   return (
     <>
@@ -194,11 +305,15 @@ const Overlay = () => {
         visible={visible}
         impact={impact}
         classification={classification}
+        attachmentCount={attachments.length}
         rect={rect}
         dark={dark}
         expanded={expanded}
         hasNudges={smartMode ? !!smartSuggestion : nudges.length > 0}
+        offset={barOffset}
         onToggle={() => setExpanded((v) => !v)}
+        onDrag={setBarOffset}
+        onDragEnd={persistBarOffset}
       />
       <DetailPanel
         open={visible && expanded}
@@ -206,6 +321,8 @@ const Overlay = () => {
         rect={rect}
         dark={dark}
         nudges={nudges}
+        attachments={attachments}
+        offset={barOffset}
         smartMode={smartMode}
         onSmartModeChange={setSmartMode}
         smartSuggestion={smartSuggestion}
@@ -217,6 +334,18 @@ const Overlay = () => {
           })
         }
         onRequestClose={() => setExpanded(false)}
+      />
+      <SessionButton
+        session={session}
+        dark={dark}
+        hidden={sessionOpen}
+        onClick={() => setSessionOpen((v) => !v)}
+      />
+      <SessionPanel
+        open={sessionOpen}
+        session={session}
+        dark={dark}
+        onRequestClose={() => setSessionOpen(false)}
       />
     </>
   )

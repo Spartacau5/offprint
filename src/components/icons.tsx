@@ -85,6 +85,63 @@ export const RefreshIcon = ({ size = 16, color = "currentColor", style }: IconPr
   </svg>
 )
 
+export const PaperclipIcon = ({ size = 14, color = "currentColor", style }: IconProps) => (
+  <svg viewBox="0 0 24 24" {...base(size, color, style)} aria-hidden="true">
+    <path d="M21 11.5 12.6 19.9a5 5 0 0 1-7.07-7.07l9-9a3.5 3.5 0 0 1 4.95 4.95l-9 9a2 2 0 0 1-2.83-2.83l8.5-8.5" />
+  </svg>
+)
+
+export const ImageIcon = ({ size = 14, color = "currentColor", style }: IconProps) => (
+  <svg viewBox="0 0 24 24" {...base(size, color, style)} aria-hidden="true">
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <circle cx="9" cy="10" r="1.5" />
+    <path d="m21 16-5-5-9 9" />
+  </svg>
+)
+
+export const TableIcon = ({ size = 14, color = "currentColor", style }: IconProps) => (
+  <svg viewBox="0 0 24 24" {...base(size, color, style)} aria-hidden="true">
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M3 10h18M3 16h18M9 4v16M15 4v16" />
+  </svg>
+)
+
+export const CodeIcon = ({ size = 14, color = "currentColor", style }: IconProps) => (
+  <svg viewBox="0 0 24 24" {...base(size, color, style)} aria-hidden="true">
+    <path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14" />
+  </svg>
+)
+
+export const VideoFileIcon = ({ size = 14, color = "currentColor", style }: IconProps) => (
+  <svg viewBox="0 0 24 24" {...base(size, color, style)} aria-hidden="true">
+    <rect x="3" y="6" width="14" height="12" rx="2" />
+    <path d="m17 10 4-2v8l-4-2z" />
+  </svg>
+)
+
+export const AudioIcon = ({ size = 14, color = "currentColor", style }: IconProps) => (
+  <svg viewBox="0 0 24 24" {...base(size, color, style)} aria-hidden="true">
+    <path d="M9 18V5l12-2v13" />
+    <circle cx="6" cy="18" r="3" />
+    <circle cx="18" cy="16" r="3" />
+  </svg>
+)
+
+export const ArchiveIcon = ({ size = 14, color = "currentColor", style }: IconProps) => (
+  <svg viewBox="0 0 24 24" {...base(size, color, style)} aria-hidden="true">
+    <rect x="3" y="3" width="18" height="5" rx="1" />
+    <path d="M5 8v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" />
+    <path d="M10 12h4" />
+  </svg>
+)
+
+export const TreeIcon = ({ size = 14, color = "currentColor", style }: IconProps) => (
+  <svg viewBox="0 0 24 24" {...base(size, color, style)} aria-hidden="true">
+    <path d="M12 2 6 10h3l-4 6h4l-3 4h12l-3-4h4l-4-6h3L12 2Z" />
+    <path d="M12 20v2" />
+  </svg>
+)
+
 export const SparkleIcon = ({ size = 14, color = "currentColor", style }: IconProps) => (
   <svg viewBox="0 0 24 24" {...base(size, color, style)} aria-hidden="true">
     <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />

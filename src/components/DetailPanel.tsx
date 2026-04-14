@@ -8,15 +8,23 @@ import {
 } from "~lib/calculator"
 import { useAnimatedNumber } from "~lib/useAnimatedNumber"
 
+import type { DetectedAttachment } from "~lib/classifier"
 import type { Nudge } from "~lib/nudges"
 import type { SmartSuggestion } from "~lib/smart"
 
 import {
+  ArchiveIcon,
+  AudioIcon,
   BoltIcon,
   CloudIcon,
+  CodeIcon,
   DropletIcon,
+  FileIcon,
+  ImageIcon,
   LeafIcon,
   SparkleIcon,
+  TableIcon,
+  VideoFileIcon,
   XIcon
 } from "./icons"
 import { NudgesSection } from "./NudgeCard"
@@ -30,11 +38,119 @@ export type DetailPanelProps = {
   rect: Rect | null
   dark: boolean
   nudges: Nudge[]
+  attachments: DetectedAttachment[]
+  offset: { x: number; y: number }
   smartMode: boolean
   onSmartModeChange: (v: boolean) => void
   smartSuggestion: SmartSuggestion | null
   onDismissNudge: (id: string) => void
   onRequestClose: () => void
+}
+
+const ATTACH_ICON: Record<string, typeof FileIcon> = {
+  image: ImageIcon,
+  pdf: FileIcon,
+  document: FileIcon,
+  spreadsheet: TableIcon,
+  code: CodeIcon,
+  data: CodeIcon,
+  video: VideoFileIcon,
+  audio: AudioIcon,
+  archive: ArchiveIcon,
+  unknown: FileIcon
+}
+
+const AttachmentsSection = ({
+  attachments,
+  surface
+}: {
+  attachments: DetectedAttachment[]
+  surface: Surface
+}) => {
+  if (attachments.length === 0) return null
+  const total = attachments.reduce((s, a) => s + a.estimatedTokens, 0)
+  const ROW_H = 28
+  const VISIBLE = 3
+  const scrollable = attachments.length > VISIBLE
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 6
+        }}>
+        <div
+          style={{
+            fontSize: 12,
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+            color: surface.textSecondary
+          }}>
+          Attached Files · {attachments.length}
+        </div>
+        <div
+          style={{
+            fontSize: 11,
+            color: surface.textSecondary,
+            fontStyle: "italic",
+            fontVariantNumeric: "tabular-nums"
+          }}>
+          +{total.toLocaleString()} tokens
+        </div>
+      </div>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+          maxHeight: scrollable ? ROW_H * VISIBLE + (VISIBLE - 1) * 4 : "none",
+          overflowY: scrollable ? "auto" : "visible"
+        }}>
+        {attachments.map((a, i) => {
+          const Icon = ATTACH_ICON[a.type] ?? FileIcon
+          return (
+            <div
+              key={`${a.filename}-${i}`}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                height: ROW_H,
+                padding: "0 8px",
+                borderRadius: 6,
+                background: "rgba(255,255,255,0.02)"
+              }}>
+              <Icon size={13} color={surface.textSecondary} />
+              <span
+                style={{
+                  flex: 1,
+                  fontSize: 12,
+                  color: surface.text,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  minWidth: 0
+                }}
+                title={a.filename}>
+                {a.filename}
+              </span>
+              <span
+                style={{
+                  fontSize: 11,
+                  color: surface.textSecondary,
+                  whiteSpace: "nowrap",
+                  fontVariantNumeric: "tabular-nums"
+                }}>
+                +{a.estimatedTokens.toLocaleString()}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 const SmartToggle = ({
@@ -227,6 +343,8 @@ export const DetailPanel = ({
   rect,
   dark,
   nudges,
+  attachments,
+  offset,
   smartMode,
   onSmartModeChange,
   smartSuggestion,
@@ -271,9 +389,12 @@ export const DetailPanel = ({
 
   if (!rect || !mounted) return null
 
-  const barTop = Math.max(8, rect.top - 48)
+  const barTop = Math.max(8, rect.top - 48) + offset.y
   const PANEL_WIDTH = Math.min(Math.max(rect.width, 360), 520)
-  const left = rect.left + rect.width / 2
+  const left = rect.left + rect.width / 2 + offset.x
+  // Cap panel height to the space available above the bar so it can't escape
+  // off the top of the viewport. Min keeps it usable on short windows.
+  const maxPanelHeight = Math.max(220, barTop - 64)
 
   return (
     <div
@@ -301,7 +422,9 @@ export const DetailPanel = ({
           WebkitBackdropFilter: "blur(16px) saturate(120%)",
           border: `1px solid ${surface.border}`,
           boxShadow: surface.shadow,
-          color: surface.text
+          color: surface.text,
+          maxHeight: `${maxPanelHeight}px`,
+          overflowY: "auto"
         }}>
         <div
           style={{
@@ -392,6 +515,8 @@ export const DetailPanel = ({
           comparison={impact.comparisons.carbon}
           surface={surface}
         />
+
+        <AttachmentsSection attachments={attachments} surface={surface} />
 
         {smartMode && smartSuggestion ? (
           <SmartCard suggestion={smartSuggestion} surface={surface} dark={dark} />

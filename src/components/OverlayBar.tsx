@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
   formatGrams,
@@ -10,7 +10,13 @@ import {
 import { TASK_LABELS, type ClassificationResult } from "~lib/classifier"
 import { useAnimatedNumber } from "~lib/useAnimatedNumber"
 
-import { BoltIcon, CloudIcon, DropletIcon, LeafIcon } from "./icons"
+import {
+  BoltIcon,
+  CloudIcon,
+  DropletIcon,
+  LeafIcon,
+  PaperclipIcon
+} from "./icons"
 
 type Rect = { top: number; left: number; width: number }
 
@@ -62,11 +68,15 @@ export type OverlayBarProps = {
   visible: boolean
   impact: ImpactResult
   classification: ClassificationResult
+  attachmentCount: number
   rect: Rect | null
   dark: boolean
   expanded: boolean
   hasNudges: boolean
+  offset: { x: number; y: number }
   onToggle: () => void
+  onDrag: (offset: { x: number; y: number }) => void
+  onDragEnd: (offset: { x: number; y: number }) => void
 }
 
 const PULSE_KEYFRAMES = `@keyframes offprint-pulse { 0%,100% { opacity: 0.6; transform: scale(1); } 50% { opacity: 1; transform: scale(1.15); } }`
@@ -88,11 +98,15 @@ export const OverlayBar = ({
   visible,
   impact,
   classification,
+  attachmentCount,
   rect,
   dark,
   expanded,
   hasNudges,
-  onToggle
+  offset,
+  onToggle,
+  onDrag,
+  onDragEnd
 }: OverlayBarProps) => {
   const surface = getSurface(dark)
   const colors = LEVEL_COLORS[impact.impactLevel]
@@ -101,10 +115,75 @@ export const OverlayBar = ({
   const water = useAnimatedNumber(impact.waterMl)
   const co2 = useAnimatedNumber(impact.co2Grams)
 
+  const dragRef = useRef<{
+    startX: number
+    startY: number
+    startOffset: { x: number; y: number }
+    moved: boolean
+    active: boolean
+    last: { x: number; y: number }
+  }>({
+    startX: 0,
+    startY: 0,
+    startOffset: { x: 0, y: 0 },
+    moved: false,
+    active: false,
+    last: { x: 0, y: 0 }
+  })
+
   if (!rect) return null
 
-  const top = Math.max(8, rect.top - 48)
-  const left = rect.left + rect.width / 2
+  const baseTop = Math.max(8, rect.top - 48)
+  const baseLeft = rect.left + rect.width / 2
+  const top = baseTop + offset.y
+  const left = baseLeft + offset.x
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startOffset: offset,
+      moved: false,
+      active: true,
+      last: offset
+    }
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  }
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!dragRef.current.active) return
+    const dx = e.clientX - dragRef.current.startX
+    const dy = e.clientY - dragRef.current.startY
+    if (!dragRef.current.moved && Math.hypot(dx, dy) > 4) {
+      dragRef.current.moved = true
+    }
+    if (dragRef.current.moved) {
+      const next = {
+        x: dragRef.current.startOffset.x + dx,
+        y: dragRef.current.startOffset.y + dy
+      }
+      dragRef.current.last = next
+      onDrag(next)
+    }
+  }
+
+  const onPointerUp = (e: React.PointerEvent) => {
+    if (!dragRef.current.active) return
+    const wasDrag = dragRef.current.moved
+    dragRef.current.active = false
+    try {
+      ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
+    } catch {
+      /* noop */
+    }
+    if (wasDrag) {
+      onDragEnd(dragRef.current.last)
+    } else {
+      onToggle()
+    }
+  }
 
   return (
     <div
@@ -116,18 +195,23 @@ export const OverlayBar = ({
         zIndex: 2147483640,
         opacity: visible ? 1 : 0,
         pointerEvents: visible ? "auto" : "none",
-        transition: "opacity 200ms ease, top 200ms ease",
+        transition: "opacity 200ms ease",
         fontFamily: FONT_STACK
       }}>
       <button
         type="button"
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={onToggle}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
         aria-expanded={expanded}
+        title="Drag to move"
         style={{
           all: "unset",
           boxSizing: "border-box",
-          cursor: "pointer",
+          cursor: dragRef.current.active && dragRef.current.moved ? "grabbing" : "grab",
+          touchAction: "none",
+          userSelect: "none",
           display: "flex",
           alignItems: "center",
           gap: "10px",
@@ -157,6 +241,22 @@ export const OverlayBar = ({
           <BoltIcon size={13} color="#FACC15" />
           {formatWh(energy)} Wh
         </span>
+
+        {attachmentCount > 0 && (
+          <span
+            title={`${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 3,
+              fontSize: 11,
+              color: surface.textSecondary,
+              whiteSpace: "nowrap"
+            }}>
+            <PaperclipIcon size={12} color={surface.textSecondary} />
+            {attachmentCount}
+          </span>
+        )}
 
         <span
           style={{

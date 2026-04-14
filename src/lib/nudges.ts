@@ -1,4 +1,8 @@
-import type { ClassificationResult, TaskType } from "./classifier"
+import type {
+  ClassificationResult,
+  DetectedAttachment,
+  TaskType
+} from "./classifier"
 
 export type NudgePriority = 1 | 2 | 3
 export type NudgeIcon =
@@ -16,6 +20,7 @@ export interface NudgeContext {
   messageCount: number
   classification: ClassificationResult
   recentTaskTypes?: TaskType[]
+  attachments?: DetectedAttachment[]
 }
 
 export interface NudgeRule {
@@ -218,6 +223,69 @@ export const NUDGE_RULES: NudgeRule[] = [
     message:
       "Analyzing large datasets is compute-heavy. Start with a sample or summary stats, then drill into specific areas.",
     iconName: "lightbulb"
+  },
+  {
+    id: "LARGE_PDF",
+    priority: 2,
+    taskSpecific: true,
+    condition: ({ attachments }) =>
+      !!attachments?.some((a) => a.type === "pdf" && a.estimatedTokens > 5000),
+    message:
+      "Large PDFs are token-heavy. If you only need specific sections, try telling the AI which pages or topics to focus on.",
+    iconName: "file"
+  },
+  {
+    id: "MULTIPLE_ATTACHMENTS",
+    priority: 2,
+    taskSpecific: true,
+    condition: ({ attachments }) => (attachments?.length ?? 0) >= 3,
+    message:
+      "Multiple attachments multiply processing cost. Consider handling them one at a time or specifying which one to focus on first.",
+    iconName: "scissors"
+  },
+  {
+    id: "IMAGE_PLUS_GENERATION",
+    priority: 3,
+    taskSpecific: true,
+    condition: ({ attachments, classification }) =>
+      classification.taskType === "image_generation" &&
+      !!attachments?.some((a) => a.type === "image"),
+    message:
+      "Uploading a reference image with an image generation request is one of the most compute-heavy combinations. Be very specific about what to change.",
+    iconName: "lightbulb"
+  },
+  {
+    id: "UNNECESSARY_ATTACHMENT",
+    priority: 1,
+    taskSpecific: true,
+    condition: ({ attachments, classification, text }) => {
+      if (!attachments || attachments.length === 0) return false
+      const t = classification.taskType
+      if (t !== "conversation" && t !== "text_short" && t !== "brainstorm")
+        return false
+      const refs = [
+        "this file",
+        "attached",
+        "attachment",
+        "the document",
+        "this image",
+        "the pdf",
+        "the file",
+        "the image",
+        "this pdf",
+        "this doc",
+        "analyze this",
+        "look at this",
+        "read this",
+        "based on this",
+        "from this"
+      ]
+      const lower = text.toLowerCase()
+      return !refs.some((r) => lower.includes(r))
+    },
+    message:
+      "You have a file attached but your prompt doesn't seem to reference it. Unused attachments still get processed — remove it if unneeded.",
+    iconName: "search"
   },
   {
     id: "EDITING_SCOPE",

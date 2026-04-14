@@ -1,8 +1,20 @@
-import type { ClassificationResult, TaskType } from "./classifier"
+import type {
+  ClassificationResult,
+  DetectedAttachment,
+  TaskType
+} from "./classifier"
 
 export interface SmartSuggestion {
   message: string
   taskType: TaskType
+}
+
+export interface SmartContext {
+  text: string
+  classification: ClassificationResult
+  attachments?: DetectedAttachment[]
+  messageCount?: number
+  recentTaskTypes?: TaskType[]
 }
 
 const TOPIC_STOPWORDS = new Set([
@@ -144,15 +156,221 @@ const TEMPLATES: Record<TaskType, Array<(text: string) => string>> = {
   ]
 }
 
+// ---- Contextual rules (evaluated before the per-task templates) ----
+
+type ContextRule = {
+  id: string
+  match: (ctx: SmartContext) => boolean
+  build: (ctx: SmartContext) => string
+}
+
+const lower = (s: string) => s.toLowerCase()
+const referencesAttachment = (text: string): boolean => {
+  const refs = [
+    "this file",
+    "attached",
+    "attachment",
+    "the document",
+    "this image",
+    "the pdf",
+    "the file",
+    "the image",
+    "this pdf",
+    "this doc",
+    "these pdfs",
+    "these files",
+    "these images",
+    "analyze this",
+    "look at this",
+    "read this",
+    "based on this",
+    "based on these",
+    "from this"
+  ]
+  const l = lower(text)
+  return refs.some((r) => l.includes(r))
+}
+
+const fmtTokens = (n: number) =>
+  n >= 1000 ? `~${Math.round(n / 100) / 10}k` : `~${n}`
+
+const CONTEXT_RULES: ContextRule[] = [
+  // Highest priority: attachment-related (these dwarf text cost)
+  {
+    id: "image_plus_image_gen",
+    match: ({ classification, attachments }) =>
+      classification.taskType === "image_generation" &&
+      !!attachments?.some((a) => a.type === "image"),
+    build: () =>
+      "Reference image + image generation is one of the most expensive combinations. Describe exactly what to change about the reference (subject, style, composition) — vague requests average 4-6 regenerations."
+  },
+  {
+    id: "multiple_heavy_attachments",
+    match: ({ attachments }) => {
+      if (!attachments || attachments.length < 2) return false
+      const total = attachments.reduce((s, a) => s + a.estimatedTokens, 0)
+      return total >= 10000
+    },
+    build: ({ attachments }) => {
+      const total = (attachments ?? []).reduce(
+        (s, a) => s + a.estimatedTokens,
+        0
+      )
+      return `Your ${attachments?.length} attachments add ${fmtTokens(total)} tokens. Tell the AI which file(s) matter and which sections to focus on — every revision otherwise re-processes all of them.`
+    }
+  },
+  {
+    id: "many_attachments",
+    match: ({ attachments }) => (attachments?.length ?? 0) >= 3,
+    build: ({ attachments }) =>
+      `${attachments?.length} attachments multiply processing cost. Process them one at a time, or pick the primary file and reference the others only when needed.`
+  },
+  {
+    id: "large_pdf",
+    match: ({ attachments }) =>
+      !!attachments?.some(
+        (a) => a.type === "pdf" && a.estimatedTokens > 5000
+      ),
+    build: ({ attachments }) => {
+      const pdf = attachments?.find(
+        (a) => a.type === "pdf" && a.estimatedTokens > 5000
+      )
+      const name = pdf?.filename ? `"${pdf.filename}"` : "the PDF"
+      return `${name} is large. Specify which pages or sections to focus on (e.g., "summarize chapters 2-3") — feeding the whole PDF on every turn wastes most of those tokens.`
+    }
+  },
+  {
+    id: "unnecessary_attachment",
+    match: ({ attachments, classification, text }) => {
+      if (!attachments?.length) return false
+      const t = classification.taskType
+      const casual =
+        t === "conversation" || t === "text_short" || t === "brainstorm"
+      return casual && !referencesAttachment(text)
+    },
+    build: () =>
+      "Your prompt doesn't reference the attached file. Unused attachments still get processed — remove them, or add a sentence about what to use them for."
+  },
+  {
+    id: "video_attachment",
+    match: ({ attachments }) =>
+      !!attachments?.some((a) => a.type === "video"),
+    build: () =>
+      "Video attachments are the most expensive input type (~50x text). If you need a specific moment, describe the timestamp and what to look for instead of asking general questions."
+  },
+  {
+    id: "audio_attachment",
+    match: ({ attachments }) =>
+      !!attachments?.some((a) => a.type === "audio"),
+    build: () =>
+      "Audio gets transcribed before analysis. If you already have a transcript, paste the relevant excerpt — it costs a fraction of the audio processing."
+  },
+  {
+    id: "spreadsheet_attachment",
+    match: ({ attachments }) =>
+      !!attachments?.some((a) => a.type === "spreadsheet"),
+    build: () =>
+      "For spreadsheets, name the columns or rows that matter and the exact question you want answered. Otherwise the model parses every cell — most of which you don't need."
+  },
+  // Light attachment + clear task: reference best-practice
+  {
+    id: "attachment_with_text_gen",
+    match: ({ classification, attachments }) =>
+      (attachments?.length ?? 0) > 0 &&
+      classification.taskType === "text_generation",
+    build: ({ attachments, text }) => {
+      const types = Array.from(new Set((attachments ?? []).map((a) => a.type)))
+      const noun = types.includes("pdf")
+        ? "PDFs"
+        : types.includes("image")
+          ? "images"
+          : "files"
+      const topic = extractTopic(text)
+      const subject = topic ? `on "${topic}"` : "for this piece"
+      return `Tell the AI which parts of the ${noun} should drive the essay ${subject} (key arguments? specific data?). This narrows the input and avoids re-reading everything on revisions.`
+    }
+  },
+
+  // Iteration / session signals
+  {
+    id: "long_iteration",
+    match: ({ messageCount }) => (messageCount ?? 0) >= 5,
+    build: ({ messageCount }) =>
+      `You've sent ${messageCount} messages. Consolidate the remaining feedback into one detailed prompt — each round-trip re-processes the prior context.`
+  },
+  {
+    id: "batch_translations",
+    match: ({ classification, recentTaskTypes }) =>
+      classification.taskType === "translation" &&
+      (recentTaskTypes?.filter((t) => t === "translation").length ?? 0) >= 2,
+    build: () =>
+      "You've been translating one-at-a-time. Batch them into a numbered list in a single prompt — same result, a fraction of the per-request overhead."
+  },
+
+  // Prompt-shape signals
+  {
+    id: "multi_request",
+    match: ({ text, classification }) => {
+      if (classification.energyMultiplier < 1) return false
+      const l = lower(text)
+      return (
+        text.length > 100 &&
+        ["and also", "plus also", "additionally", "while you're at it", "oh and", "one more thing"].some(
+          (k) => l.includes(k)
+        )
+      )
+    },
+    build: () =>
+      "This prompt asks for multiple things at once. Splitting it gives better answers per part and lets you skip the ones you don't need."
+  },
+  {
+    id: "long_prompt",
+    match: ({ text }) => Math.ceil(text.length / 4) > 500,
+    build: () =>
+      "This prompt is long. Try a short statement of your goal followed by a bulleted list of requirements — the model usually ignores the redundant context anyway."
+  },
+  {
+    id: "vague_short",
+    match: ({ text, classification }) =>
+      text.trim().length > 0 &&
+      text.trim().length < 30 &&
+      classification.confidence === "low" &&
+      classification.taskType === "unknown",
+    build: () =>
+      "Add one sentence on format and one example of a good result. Two minutes of context here saves 2-3 follow-up rounds."
+  }
+]
+
 export function smartAnalyze(
-  text: string,
-  classification: ClassificationResult
+  textOrCtx: string | SmartContext,
+  classification?: ClassificationResult
 ): SmartSuggestion {
-  const templates = TEMPLATES[classification.taskType] ?? TEMPLATES.unknown
-  const idx = Math.abs(hashString(text.slice(0, 80))) % templates.length
+  const ctx: SmartContext =
+    typeof textOrCtx === "string"
+      ? { text: textOrCtx, classification: classification! }
+      : textOrCtx
+
+  // Try contextual rules first (highest signal wins)
+  for (const rule of CONTEXT_RULES) {
+    try {
+      if (rule.match(ctx)) {
+        return {
+          taskType: ctx.classification.taskType,
+          message: rule.build(ctx)
+        }
+      }
+    } catch {
+      // ignore broken rule, continue
+    }
+  }
+
+  // Fallback: task-type template
+  const templates =
+    TEMPLATES[ctx.classification.taskType] ?? TEMPLATES.unknown
+  const idx = Math.abs(hashString(ctx.text.slice(0, 80))) % templates.length
   return {
-    taskType: classification.taskType,
-    message: templates[idx](text)
+    taskType: ctx.classification.taskType,
+    message: templates[idx](ctx.text)
   }
 }
 
