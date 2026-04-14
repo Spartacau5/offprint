@@ -1,7 +1,11 @@
+import type { ClassificationResult } from "./classifier"
+
 export type ImpactLevel = "low" | "medium" | "high"
 
 export interface ImpactResult {
   tokens: number
+  inputTokens: number
+  outputTokens: number
   energyWh: number
   co2Grams: number
   waterMl: number
@@ -18,9 +22,9 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4)
 }
 
-export function getImpactLevel(tokens: number): ImpactLevel {
-  if (tokens <= 200) return "low"
-  if (tokens <= 800) return "medium"
+export function getImpactLevel(totalEnergyWh: number): ImpactLevel {
+  if (totalEnergyWh < 0.5) return "low"
+  if (totalEnergyWh < 3) return "medium"
   return "high"
 }
 
@@ -34,10 +38,19 @@ function fmtSmall(n: number): string {
   return Math.round(n).toLocaleString()
 }
 
-export function calculateImpact(characterCount: number): ImpactResult {
-  const tokens = Math.ceil(Math.max(0, characterCount) / 4)
-  const energyWh = (tokens / 250) * 0.34
-  const totalEnergyWh = energyWh * 1.3
+export function calculateImpact(
+  characterCount: number,
+  classification?: ClassificationResult
+): ImpactResult {
+  const inputTokens = Math.ceil(Math.max(0, characterCount) / 4)
+  const outputTokens =
+    classification?.estimatedOutputTokens ?? Math.max(150, inputTokens * 3)
+  const totalTokens = inputTokens + outputTokens
+  const multiplier = classification?.energyMultiplier ?? 1
+
+  const baseEnergyWh = (totalTokens / 250) * 0.34
+  const adjustedEnergyWh = baseEnergyWh * multiplier
+  const totalEnergyWh = adjustedEnergyWh * 1.3
   const co2Grams = totalEnergyWh * 0.001 * 367
   const waterMl = totalEnergyWh * 0.001 * (1.9 + 4.54)
 
@@ -46,11 +59,13 @@ export function calculateImpact(characterCount: number): ImpactResult {
   const drivingMeters = (co2Grams / 210) * 1000
 
   return {
-    tokens,
+    tokens: totalTokens,
+    inputTokens,
+    outputTokens,
     energyWh: totalEnergyWh,
     co2Grams,
     waterMl,
-    impactLevel: getImpactLevel(tokens),
+    impactLevel: getImpactLevel(totalEnergyWh),
     comparisons: {
       energy: `≈ charging your phone for ${formatDuration(phoneChargeSeconds)}`,
       water: `≈ ${fmtSmall(sipsOfWater)} sips of water`,

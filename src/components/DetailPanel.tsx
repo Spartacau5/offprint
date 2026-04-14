@@ -8,8 +8,19 @@ import {
 } from "~lib/calculator"
 import { useAnimatedNumber } from "~lib/useAnimatedNumber"
 
-import { BoltIcon, CloudIcon, DropletIcon, LeafIcon, XIcon } from "./icons"
-import { FONT_STACK, getSurface } from "./OverlayBar"
+import type { Nudge } from "~lib/nudges"
+import type { SmartSuggestion } from "~lib/smart"
+
+import {
+  BoltIcon,
+  CloudIcon,
+  DropletIcon,
+  LeafIcon,
+  SparkleIcon,
+  XIcon
+} from "./icons"
+import { NudgesSection } from "./NudgeCard"
+import { FONT_STACK, getSurface, type Surface } from "./OverlayBar"
 
 type Rect = { top: number; left: number; width: number }
 
@@ -18,7 +29,137 @@ export type DetailPanelProps = {
   impact: ImpactResult
   rect: Rect | null
   dark: boolean
+  nudges: Nudge[]
+  smartMode: boolean
+  onSmartModeChange: (v: boolean) => void
+  smartSuggestion: SmartSuggestion | null
+  onDismissNudge: (id: string) => void
   onRequestClose: () => void
+}
+
+const SmartToggle = ({
+  on,
+  surface,
+  onChange
+}: {
+  on: boolean
+  surface: Surface
+  onChange: (v: boolean) => void
+}) => (
+  <button
+    type="button"
+    role="switch"
+    aria-checked={on}
+    onMouseDown={(e) => e.preventDefault()}
+    onClick={() => onChange(!on)}
+    style={{
+      all: "unset",
+      cursor: "pointer",
+      width: 30,
+      height: 18,
+      borderRadius: 9,
+      background: on ? "#10B981" : surface.divider,
+      position: "relative",
+      transition: "background 200ms ease",
+      display: "inline-block",
+      flexShrink: 0
+    }}>
+    <span
+      style={{
+        position: "absolute",
+        top: 2,
+        left: on ? 14 : 2,
+        width: 14,
+        height: 14,
+        borderRadius: "50%",
+        background: "#fff",
+        boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
+        transition: "left 200ms ease"
+      }}
+    />
+  </button>
+)
+
+const SmartCard = ({
+  suggestion,
+  surface,
+  dark
+}: {
+  suggestion: SmartSuggestion
+  surface: Surface
+  dark: boolean
+}) => {
+  const cardBg = dark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.035)"
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          fontSize: 10,
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+          color: surface.textSecondary,
+          marginBottom: 8
+        }}>
+        <SparkleIcon size={12} color="#10B981" />
+        Smart Suggestion
+      </div>
+      <div
+        style={{
+          position: "relative",
+          padding: 12,
+          borderRadius: 8,
+          background: cardBg
+        }}>
+        <svg
+          width="100%"
+          height="100%"
+          preserveAspectRatio="none"
+          style={{
+            position: "absolute",
+            inset: 0,
+            pointerEvents: "none",
+            overflow: "visible"
+          }}>
+          <rect
+            x="0.5"
+            y="0.5"
+            width="calc(100% - 1px)"
+            height="calc(100% - 1px)"
+            rx="7.5"
+            ry="7.5"
+            fill="none"
+            stroke="#10B981"
+            strokeWidth="1"
+            pathLength={100}
+            strokeDasharray="0 50 0 50">
+            <animate
+              attributeName="stroke-dasharray"
+              from="0 50 0 50"
+              to="50 0 50 0"
+              dur="650ms"
+              begin="0s"
+              fill="freeze"
+              calcMode="spline"
+              keyTimes="0;1"
+              keySplines="0.42 0 0.58 1"
+            />
+          </rect>
+        </svg>
+        <div
+          style={{
+            position: "relative",
+            fontSize: 13,
+            lineHeight: 1.45,
+            color: surface.text
+          }}>
+          {suggestion.message}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 const SPRING = "cubic-bezier(0.16, 1, 0.3, 1)"
@@ -85,6 +226,11 @@ export const DetailPanel = ({
   impact,
   rect,
   dark,
+  nudges,
+  smartMode,
+  onSmartModeChange,
+  smartSuggestion,
+  onDismissNudge,
   onRequestClose
 }: DetailPanelProps) => {
   const surface = getSurface(dark)
@@ -172,7 +318,26 @@ export const DetailPanel = ({
             }}>
             Estimated Impact
           </div>
-          <button
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <label
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                cursor: "pointer",
+                fontSize: 11,
+                color: surface.textSecondary
+              }}
+              title="Uses minimal AI for better suggestions">
+              <SparkleIcon size={12} color={smartMode ? "#10B981" : surface.textSecondary} />
+              <span>Smart</span>
+              <SmartToggle
+                on={smartMode}
+                surface={surface}
+                onChange={onSmartModeChange}
+              />
+            </label>
+            <button
             type="button"
             aria-label="Close"
             onMouseDown={(e) => e.preventDefault()}
@@ -199,8 +364,9 @@ export const DetailPanel = ({
               e.currentTarget.style.opacity = "0.7"
               e.currentTarget.style.background = "transparent"
             }}>
-            <XIcon size={14} color={surface.text} />
-          </button>
+              <XIcon size={14} color={surface.text} />
+            </button>
+          </div>
         </div>
 
         <Row
@@ -227,20 +393,39 @@ export const DetailPanel = ({
           surface={surface}
         />
 
+        {smartMode && smartSuggestion ? (
+          <SmartCard suggestion={smartSuggestion} surface={surface} dark={dark} />
+        ) : (
+          <NudgesSection
+            nudges={nudges}
+            surface={surface}
+            dark={dark}
+            level={impact.impactLevel}
+            onDismiss={onDismissNudge}
+          />
+        )}
+
         <div
           style={{
             marginTop: 12,
             paddingTop: 10,
             borderTop: `1px solid ${surface.divider}`,
             display: "flex",
-            justifyContent: "flex-end",
+            justifyContent: "space-between",
+            alignItems: "center",
             fontSize: 10,
             fontWeight: 500,
-            opacity: 0.4,
-            color: "#10B981",
             letterSpacing: "0.02em"
           }}>
-          Offprint
+          <span
+            style={{
+              fontStyle: "italic",
+              color: surface.textSecondary,
+              opacity: smartMode ? 0.8 : 0
+            }}>
+            Smart Mode uses ~0.001 Wh per analysis
+          </span>
+          <span style={{ opacity: 0.4, color: "#10B981" }}>Offprint</span>
         </div>
       </div>
     </div>

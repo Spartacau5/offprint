@@ -7,6 +7,7 @@ import {
   type ImpactLevel,
   type ImpactResult
 } from "~lib/calculator"
+import { TASK_LABELS, type ClassificationResult } from "~lib/classifier"
 import { useAnimatedNumber } from "~lib/useAnimatedNumber"
 
 import { BoltIcon, CloudIcon, DropletIcon, LeafIcon } from "./icons"
@@ -60,11 +61,15 @@ const LEVEL_COLORS: Record<ImpactLevel, { bg: string; fg: string }> = {
 export type OverlayBarProps = {
   visible: boolean
   impact: ImpactResult
+  classification: ClassificationResult
   rect: Rect | null
   dark: boolean
   expanded: boolean
+  hasNudges: boolean
   onToggle: () => void
 }
+
+const PULSE_KEYFRAMES = `@keyframes offprint-pulse { 0%,100% { opacity: 0.6; transform: scale(1); } 50% { opacity: 1; transform: scale(1.15); } }`
 
 const Separator = ({ color }: { color: string }) => (
   <span
@@ -82,9 +87,11 @@ const Separator = ({ color }: { color: string }) => (
 export const OverlayBar = ({
   visible,
   impact,
+  classification,
   rect,
   dark,
   expanded,
+  hasNudges,
   onToggle
 }: OverlayBarProps) => {
   const surface = getSurface(dark)
@@ -167,6 +174,19 @@ export const OverlayBar = ({
           {LEVEL_LABELS[impact.impactLevel]}
         </span>
 
+        {classification.taskType !== "unknown" && (
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 500,
+              color: surface.textSecondary,
+              whiteSpace: "nowrap",
+              letterSpacing: "-0.005em"
+            }}>
+            {TASK_LABELS[classification.taskType]}
+          </span>
+        )}
+
         <span
           style={{
             display: "inline-flex",
@@ -182,6 +202,21 @@ export const OverlayBar = ({
 
         <Separator color={surface.textSecondary} />
 
+        {hasNudges && !expanded && (
+          <span
+            aria-label="Efficiency tips available"
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: "#F59E0B",
+              display: "inline-block",
+              flexShrink: 0,
+              animation: "offprint-pulse 2s ease-in-out infinite"
+            }}
+          />
+        )}
+
         <span
           style={{
             display: "inline-flex",
@@ -195,6 +230,7 @@ export const OverlayBar = ({
           {formatGrams(co2)}g CO₂
         </span>
       </button>
+      <style>{PULSE_KEYFRAMES}</style>
     </div>
   )
 }
